@@ -8,7 +8,7 @@
 [![platform](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white)](#下载)
 [![python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](#从源码运行)
 [![size](https://img.shields.io/badge/size-19%20MB-lightgrey)](#下载)
-[![license](https://img.shields.io/badge/license-see%20below-lightgrey)](#许可)
+[![license](https://img.shields.io/github/license/Amhertx/BatteryTray?color=2BA35A)](LICENSE)
 
 **[⬇ 下载最新版](https://github.com/Amhertx/BatteryTray/releases/latest)** · [功能](#功能) · [使用](#使用) · [常见问题](#常见问题) · [从源码运行](#从源码运行) · [协议细节](docs/PROTOCOL.md)
 
@@ -206,7 +206,10 @@ Tk Canvas 的 `arc` / `oval` / `polygon` 没有抗锯齿，100% DPI 下圆角和
 
 ## 许可
 
-暂未附加开源协议，保留所有权利。如需在其它项目里复用，开个 issue 聊一下。
+[MIT](LICENSE) © 2026 Amhertx
+
+随便用：可以读、改、合并、发布、商用、再授权，只要保留版权声明和许可声明。
+软件按「原样」提供，不附带任何担保 —— 拿它去读你自己的设备，风险自负。
 
 ---
 
