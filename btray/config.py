@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 APP_NAME = "BatteryTray"
-VERSION = "1.2"
+VERSION = "1.3"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 AUDIT_PATH = APP_DIR / "audit.log"
@@ -28,6 +28,7 @@ DEFAULTS = {
     "autostart": False,
     "low_battery_alert": True,     # 低电量是否弹系统通知
     "low_battery_threshold": 20,   # 低电量阈值（15/20/25/30）
+    "start_hint_shown": False,     # 首次启动是否已提示过「图标在通知区」
 }
 
 THRESHOLD_CHOICES = (15, 20, 25, 30)

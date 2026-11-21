@@ -78,6 +78,17 @@ def current() -> Palette:
     return DARK if system_dark() else LIGHT
 
 
+def mix_hex(a: str, b: str, t: float) -> str:
+    """按 t 混合两色（t=0 全 a，t=1 全 b），用于在色块底上压出环轨道色。"""
+    a = a.lstrip("#")
+    b = b.lstrip("#")
+    out = []
+    for i in (0, 2, 4):
+        va, vb = int(a[i:i + 2], 16), int(b[i:i + 2], 16)
+        out.append(round(va * (1 - t) + vb * t))
+    return "#%02X%02X%02X" % tuple(out)
+
+
 def device_tint(key: str, pal: Palette) -> tuple[str, str]:
     light, dark = DEVICE_TINT.get(key, (("#6B7280", "#ECEEF2"), ("#9AA2AE", "#2E3238")))
     return dark if pal.dark else light

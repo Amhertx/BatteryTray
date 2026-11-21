@@ -5,6 +5,7 @@ import ctypes
 import sys
 import tkinter as tk
 
+from . import diag
 from .config import load
 from .panel import Panel
 from .service import BatteryService
@@ -32,7 +33,9 @@ def _enable_dpi() -> None:
 
 
 def main() -> int:
+    diag.install()
     if not _acquire_single_instance():
+        diag.note("skip: another instance is running")
         return 0
 
     _enable_dpi()
@@ -56,10 +59,12 @@ def main() -> int:
 
     service.start()
     tray.start()
+    diag.note(f"ready: {len(tray._icons)} tray icon(s), mode={tray.mode}")
 
     try:
         root.mainloop()
     finally:
+        diag.note("mainloop returned")
         service.stop()
     return 0
 

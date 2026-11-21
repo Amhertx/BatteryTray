@@ -1,57 +1,47 @@
-"""面板内的矢量图形（PIL 4 倍超采样 → PhotoImage）。
+"""面板内的矢量图形，直接画进 PIL 图像（配合超采样抗锯齿）。
 
-Tk Canvas 自带的 arc/polygon 没有抗锯齿，19px 的耳机、鼠标图形会毛边；
-这里统一先画 4 倍图再 LANCZOS 缩小，边缘和系统图标一致。
+坐标按 24×24 的设计网格书写，由 ox/oy/k 映射到实际像素，
+这样同一份路径既能画 22px 的卡片图标，也能画 14px 的按钮图标。
 """
 from __future__ import annotations
 
 import math
 
-from PIL import Image, ImageDraw, ImageTk
-
-_CACHE: dict[tuple, ImageTk.PhotoImage] = {}
-S = 4  # 超采样倍数
+from PIL import ImageDraw
 
 
-def _canvas(size: int) -> tuple[Image.Image, ImageDraw.ImageDraw, float]:
-    n = size * S
-    img = Image.new("RGBA", (n, n), (0, 0, 0, 0))
-    return img, ImageDraw.Draw(img), n / 24.0
+def _p(ox: float, oy: float, k: float, *v: float) -> list[float]:
+    """把 24 网格坐标映射到画布坐标（v 为 x,y 交替）。"""
+    out: list[float] = []
+    for i, val in enumerate(v):
+        out.append(ox + val * k if i % 2 == 0 else oy + val * k)
+    return out
 
 
-def _headset(d, k, color, w):
-    def p(*v):
-        return tuple(x * k for x in v)
-
-    d.arc(p(3.5, 3.5, 20.5, 20.5), 180, 360, fill=color, width=w)
-    d.rounded_rectangle(p(2.6, 12.5, 7.2, 21), radius=2.2 * k, fill=color)
-    d.rounded_rectangle(p(16.8, 12.5, 21.4, 21), radius=2.2 * k, fill=color)
+def _headset(d, k, color, w, ox, oy):
+    d.arc(_p(ox, oy, k, 3.5, 3.5, 20.5, 20.5), 180, 360, fill=color, width=w)
+    d.rounded_rectangle(_p(ox, oy, k, 2.6, 12.5, 7.2, 21), radius=2.2 * k, fill=color)
+    d.rounded_rectangle(_p(ox, oy, k, 16.8, 12.5, 21.4, 21), radius=2.2 * k, fill=color)
 
 
-def _mouse(d, k, color, w):
-    """实心机身 + 镂空分缝。19px 下描边太细看不出来，实心剪影更立得住。"""
-    def p(*v):
-        return tuple(x * k for x in v)
-
-    d.rounded_rectangle(p(6.9, 2.6, 17.1, 21.4), radius=4.9 * k, fill=color)
-    d.rectangle(p(11.1, 2.6, 12.9, 10.0), fill=(0, 0, 0, 0))
-    d.rectangle(p(6.9, 9.7, 17.1, 11.3), fill=(0, 0, 0, 0))
+def _mouse(d, k, color, w, ox, oy):
+    """实心机身 + 镂空分缝，小尺寸下比描边轮廓更立得住。"""
+    d.rounded_rectangle(_p(ox, oy, k, 6.9, 2.6, 17.1, 21.4), radius=4.9 * k, fill=color)
+    d.rectangle(_p(ox, oy, k, 11.1, 2.6, 12.9, 10.0), fill=(0, 0, 0, 0))
+    d.rectangle(_p(ox, oy, k, 6.9, 9.7, 17.1, 11.3), fill=(0, 0, 0, 0))
 
 
-def _keyboard(d, k, color, w):
-    def p(*v):
-        return tuple(x * k for x in v)
-
-    d.rounded_rectangle(p(1.8, 6.4, 22.2, 17.6), radius=2.4 * k, outline=color, width=w)
-    r = max(1, int(0.9 * k))
-    for i, x in enumerate((5.2, 8.9, 12.6, 16.3, 18.8)):
-        cy = 9.6 if i < 4 else 9.6
-        d.rounded_rectangle(p(x - 0.55, cy - 0.55, x + 0.55, cy + 0.55), radius=r, fill=color)
-    d.rounded_rectangle(p(7.6, 13.2, 16.4, 14.4), radius=r, fill=color)
+def _keyboard(d, k, color, w, ox, oy):
+    d.rounded_rectangle(_p(ox, oy, k, 1.8, 6.4, 22.2, 17.6), radius=2.4 * k,
+                        outline=color, width=w)
+    r = max(1, 0.9 * k)
+    for x in (5.2, 8.9, 12.6, 16.3, 18.8):
+        d.rounded_rectangle(_p(ox, oy, k, x - 0.6, 9.0, x + 0.6, 10.2), radius=r, fill=color)
+    d.rounded_rectangle(_p(ox, oy, k, 7.6, 13.2, 16.4, 14.4), radius=r, fill=color)
 
 
-def _gear(d, k, color, w):
-    cx = cy = 12 * k
+def _gear(d, k, color, w, ox, oy):
+    cx, cy = ox + 12 * k, oy + 12 * k
     for i in range(8):
         a = math.pi / 4 * i
         r1, r2 = 6.4 * k, 9.2 * k
@@ -62,27 +52,26 @@ def _gear(d, k, color, w):
     d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=color, width=int(w * 1.1))
 
 
-def _back(d, k, color, w):
-    d.line((15 * k, 4.5 * k, 8 * k, 12 * k, 15 * k, 19.5 * k),
-           fill=color, width=w, joint="curve")
+def _back(d, k, color, w, ox, oy):
+    d.line(_p(ox, oy, k, 15, 4.5, 8, 12, 15, 19.5), fill=color, width=w, joint="curve")
 
 
-def _chevron(d, k, color, w):
-    d.line((9.5 * k, 4 * k, 15.5 * k, 12 * k, 9.5 * k, 20 * k),
-           fill=color, width=w, joint="curve")
+def _chevron(d, k, color, w, ox, oy):
+    d.line(_p(ox, oy, k, 9.5, 4, 15.5, 12, 9.5, 20), fill=color, width=w, joint="curve")
 
 
-def _bell(d, k, color, w):
-    d.arc((4.4 * k, 1.6 * k, 19.6 * k, 16.8 * k), 180, 360, fill=color, width=w)
-    d.line((4.4 * k, 9.2 * k, 4.4 * k, 15 * k), fill=color, width=w)
-    d.line((19.6 * k, 9.2 * k, 19.6 * k, 15 * k), fill=color, width=w)
-    d.line((2.8 * k, 15 * k, 21.2 * k, 15 * k), fill=color, width=w)
-    d.arc((9.6 * k, 14.4 * k, 14.4 * k, 19.6 * k), 0, 180, fill=color, width=w)
+def _bell(d, k, color, w, ox, oy):
+    d.arc(_p(ox, oy, k, 4.4, 1.6, 19.6, 16.8), 180, 360, fill=color, width=w)
+    d.line(_p(ox, oy, k, 4.4, 9.2, 4.4, 15), fill=color, width=w)
+    d.line(_p(ox, oy, k, 19.6, 9.2, 19.6, 15), fill=color, width=w)
+    d.line(_p(ox, oy, k, 2.8, 15, 21.2, 15), fill=color, width=w)
+    d.arc(_p(ox, oy, k, 9.6, 14.4, 14.4, 19.6), 0, 180, fill=color, width=w)
 
 
-def _bolt(d, k, color, w):
-    d.polygon([(13.4 * k, 1.8 * k), (4.6 * k, 13.4 * k), (11.2 * k, 13.4 * k),
-               (10.2 * k, 22.2 * k), (19.0 * k, 10.6 * k), (12.4 * k, 10.6 * k)],
+def _bolt(d, k, color, w, ox, oy):
+    d.polygon([_p(ox, oy, k, 13.4, 1.8), _p(ox, oy, k, 4.6, 13.4),
+               _p(ox, oy, k, 11.2, 13.4), _p(ox, oy, k, 10.2, 22.2),
+               _p(ox, oy, k, 19.0, 10.6), _p(ox, oy, k, 12.4, 10.6)],
               fill=color)
 
 
@@ -98,16 +87,9 @@ _GLYPHS = {
 }
 
 
-def ui_icon(kind: str, color: str, size: int = 19, stroke: float = 1.9) -> ImageTk.PhotoImage:
-    """返回可直接给 Canvas.create_image 的图形；同参数会命中缓存。"""
-    key = (kind, color, size, round(stroke, 2))
-    hit = _CACHE.get(key)
-    if hit is not None:
-        return hit
-
-    img, draw, k = _canvas(size)
-    _GLYPHS[kind](draw, k, color, max(1, int(stroke * S)))
-    img = img.resize((size, size), Image.LANCZOS)
-    photo = ImageTk.PhotoImage(img)
-    _CACHE[key] = photo
-    return photo
+def draw_glyph(d: ImageDraw.ImageDraw, kind: str, color: str, cx: float, cy: float,
+               size: float, stroke: float = 2.0) -> None:
+    """在 (cx, cy) 居中画一个 size 见方的图形；坐标已是目标像素。"""
+    k = size / 24.0
+    _GLYPHS[kind](d, k, color, max(2, int(round(stroke * k))),
+                  cx - size / 2, cy - size / 2)

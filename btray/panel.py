@@ -1,24 +1,32 @@
-"""托盘弹出面板（Tkinter 绘制）。
+"""托盘弹出面板（PIL 渲染 + Tk 显示）。
 
-v1.1 设计稿：
-- 360×372 圆角浮层，一台设备一张卡片（色块图形 + 名称 + 状态 + 大号百分比 + 电量条）
-- 右上齿轮进入「设置」页，显示/提醒/通用三组，不必再翻右键菜单
-- 跟随系统深浅色（读 AppsUseLightTheme）
-- 弹出：下方 10px 上滑 + 渐显；关闭反向渐隐
-- 点某张卡片只刷新那台设备
+为什么不用 Tk 原生图形：Canvas 的 arc/oval/polygon 没有抗锯齿，圆角、开关、胶囊
+在 100% DPI 下全是台阶。这里整块面板画在 2 倍画布上再 LANCZOS 缩到 1:1，
+文字走雅黑（PIL 带 hinting），边缘和系统原生控件一致。
+
+v1.3 布局：
+- 一台设备一张卡片，左侧是「圆环包围设备图形」的电量环，右侧是名称/状态/大号百分比
+- 右上齿轮 → 面板内设置页（显示 / 提醒 / 通用）
+- 跟随系统深浅色
 """
 from __future__ import annotations
 
 import ctypes
+import math
 import time
 import tkinter as tk
 
-from .config import DEVICES, THRESHOLD_CHOICES, VERSION
-from .glyphs import ui_icon
-from .icons import GLYPH
-from .theme import Palette, current as current_palette, device_tint
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-FONT = "Microsoft YaHei UI"
+from .config import DEVICES, THRESHOLD_CHOICES, VERSION
+from .glyphs import draw_glyph
+from .icons import GLYPH
+from .theme import Palette, current as current_palette, device_tint, mix_hex
+
+SS = 2                     # 超采样倍数
+FONT_REG = "C:/Windows/Fonts/msyh.ttc"
+FONT_BOLD = "C:/Windows/Fonts/msyhbd.ttc"
+FONT_INDEX = 1             # ttc 里的 Microsoft YaHei UI
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_ROUND = 2
@@ -27,7 +35,6 @@ GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
 
-# 选中态胶囊的等效色（浅色 / 深色）
 SEL = {"light": ("#EAF1FE", "#B9D2F7", "#12325E"),
        "dark": ("#22314D", "#3E5C8C", "#A8CBF5")}
 
@@ -65,6 +72,90 @@ def _ago(ts: float) -> str:
     return f"{delta // 86400} 天前"
 
 
+class Pen:
+    """在超采样画布上绘制：入参都是逻辑像素，内部统一乘 SS。"""
+
+    def __init__(self, img: Image.Image, draw: ImageDraw.ImageDraw, pal: Palette):
+        self.img = img
+        self.d = draw
+        self.pal = pal
+        self._fonts: dict[tuple, ImageFont.FreeTypeFont] = {}
+
+    def font(self, px: float, bold: bool = False) -> ImageFont.FreeTypeFont:
+        key = (round(px), bold)
+        hit = self._fonts.get(key)
+        if hit is None:
+            hit = ImageFont.truetype(FONT_BOLD if bold else FONT_REG,
+                                     max(6, int(round(px * SS))), index=FONT_INDEX)
+            self._fonts[key] = hit
+        return hit
+
+    def text(self, x: float, y: float, s: str, px: float, color: str,
+             anchor: str = "lt", bold: bool = False) -> None:
+        self.d.text((x * SS, y * SS), s, font=self.font(px, bold), fill=color, anchor=anchor)
+
+    def width(self, s: str, px: float, bold: bool = False) -> float:
+        return self.d.textlength(s, font=self.font(px, bold)) / SS
+
+    def line(self, x1, y1, x2, y2, color: str, width: float = 1) -> None:
+        self.d.line([x1 * SS, y1 * SS, x2 * SS, y2 * SS], fill=color,
+                    width=max(1, int(round(width * SS))))
+
+    def rr(self, x1, y1, x2, y2, r, fill=None, outline=None, width: float = 1) -> None:
+        self.d.rounded_rectangle([x1 * SS, y1 * SS, x2 * SS, y2 * SS], radius=r * SS,
+                                 fill=fill, outline=outline,
+                                 width=max(1, int(round(width * SS))))
+
+    def glyph(self, kind: str, color: str, cx: float, cy: float, size: float,
+              stroke: float = 1.9) -> None:
+        draw_glyph(self.d, kind, color, cx * SS, cy * SS, size * SS, stroke)
+
+    RING_SS = 8            # 环的局部超采样倍数，主画布只有 2 倍，环的边缘要更细的过渡
+
+    def ring(self, cx: float, cy: float, r: float, w: float, ratio: float,
+             color: str, track: str) -> None:
+        """电量环：外半径 r、线宽 w，圆头落在中线 r - w/2 上。
+
+        PIL 的 arc(width=) 是「从外边界向内」描边的，弧线中线并不在 r 上；
+        若圆头按 r 摆放就会比环宽出去半个线宽，两端各冒一个小凸点。
+        这里改用局部 8 倍画布上的实心几何（外圆减内圆）构造环，再降采样合成。
+        """
+        pad = w / 2 + 1
+        size = (r + pad) * 2
+        n = max(8, int(round(size * self.RING_SS)))
+        layer = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        k = n / size                      # 逻辑像素 → 局部像素
+        c = n / 2
+        ro, ri = r * k, (r - w) * k
+        rc = (r - w / 2) * k              # 中线半径
+        box_out = (c - ro, c - ro, c + ro, c + ro)
+        box_in = (c - ri, c - ri, c + ri, c + ri)
+
+        d.ellipse(box_out, fill=track)
+        d.ellipse(box_in, fill=(0, 0, 0, 0))
+
+        ratio = max(0.0, min(1.0, ratio))
+        if ratio > 0.002:
+            if ratio >= 0.998:
+                d.ellipse(box_out, fill=color)
+                d.ellipse(box_in, fill=(0, 0, 0, 0))
+            else:
+                end = -90 + 360 * ratio
+                d.pieslice(box_out, -90, end, fill=color)
+                d.ellipse(box_in, fill=(0, 0, 0, 0))
+                hr = w / 2 * k
+                for ang in (-90, end):
+                    a = math.radians(ang)
+                    px, py = c + rc * math.cos(a), c + rc * math.sin(a)
+                    d.ellipse((px - hr, py - hr, px + hr, py + hr), fill=color)
+
+        edge = int(round(size * SS))
+        small = layer.resize((edge, edge), Image.LANCZOS)
+        self.img.paste(small, (int(round((cx - r - pad) * SS)),
+                               int(round((cy - r - pad) * SS))), small)
+
+
 class Panel:
     W, H = 360, 372
     PAD = 12
@@ -84,8 +175,9 @@ class Panel:
         self.pal: Palette = current_palette()
         self.view = "main"
         self._hot: list[tuple[float, float, float, float, object]] = []
-        self._imgs: list = []
         self._hover = -1
+        self._photo = None
+        self._img: Image.Image | None = None
         self._job = None
         self._anim_job = None
         self._hide_job = None
@@ -255,131 +347,105 @@ class Panel:
         self._draw()
         self._job = self.win.after(2500, self._schedule_refresh)
 
-    # ---------- 基础绘制 ----------
-    def _round(self, x1, y1, x2, y2, r, fill, outline="", width=1):
-        """精确圆角矩形：Tk 没有原生圆角，smooth-polygon 的拐角会塌成斜角，
-        这里用「两块矩形 + 四个圆」填充，再用「四段圆弧 + 四条直边」描边。
-        圆角半径可以等于高度一半，因此开关胶囊也是同一个函数画的。"""
-        c = self.canvas
-        r = max(1, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
-        d = 2 * r
-        if fill:
-            c.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline="")
-            c.create_rectangle(x1, y1 + r, x2, y2 - r, fill=fill, outline="")
-            for bx, by in ((x1, y1), (x2 - d, y1), (x1, y2 - d), (x2 - d, y2 - d)):
-                c.create_oval(bx, by, bx + d, by + d, fill=fill, outline="")
-        if outline:
-            for bx, by, start in ((x1, y1, 90), (x2 - d, y1, 0),
-                                  (x1, y2 - d, 180), (x2 - d, y2 - d, 270)):
-                c.create_arc(bx, by, bx + d, by + d, start=start, extent=90,
-                             style="arc", outline=outline, width=width)
-            c.create_line(x1 + r, y1, x2 - r, y1, fill=outline, width=width)
-            c.create_line(x1 + r, y2, x2 - r, y2, fill=outline, width=width)
-            c.create_line(x1, y1 + r, x1, y2 - r, fill=outline, width=width)
-            c.create_line(x2, y1 + r, x2, y2 - r, fill=outline, width=width)
-
-    def _text(self, x, y, s, size, color, anchor="w", bold=False):
-        font = (FONT, size, "bold") if bold else (FONT, size)
-        return self.canvas.create_text(x, y, text=s, anchor=anchor, fill=color, font=font)
-
-    def _icon(self, kind, color, x, y, size=19):
-        photo = ui_icon(kind, color, size)
-        self._imgs.append(photo)
-        self.canvas.create_image(x, y, image=photo, anchor="center")
-
     def _hit(self, x1, y1, x2, y2, cb) -> None:
         self._hot.append((x1, y1, x2, y2, cb))
 
     # ---------- 绘制入口 ----------
     def _draw(self) -> None:
-        self.canvas.delete("all")
-        self._imgs = []
-        self._hot = []
         p = self.pal
-        self._round(0.5, 0.5, self.W - 0.5, self.H - 0.5, 12, p.bg, p.border)
+        self._hot = []
+        img = Image.new("RGB", (self.W * SS, self.H * SS), p.bg)
+        pen = Pen(img, ImageDraw.Draw(img), p)
+        pen.rr(0.5, 0.5, self.W - 0.5, self.H - 0.5, 8, fill=p.bg, outline=p.border)
+
         if self.view == "settings":
-            self._draw_settings()
+            self._draw_settings(pen)
         else:
-            self._draw_main()
+            self._draw_main(pen)
+
+        self._img = img
+        self._photo = ImageTk.PhotoImage(img.resize((self.W, self.H), Image.LANCZOS))
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, image=self._photo, anchor="nw")
 
     # ---------- 主页 ----------
-    def _draw_main(self) -> None:
+    def _draw_main(self, pen: Pen) -> None:
         p = self.pal
         readings = self.service.snapshot()
         online = sum(1 for r in readings if r.status == "ok")
         charging = sum(1 for r in readings if r.status == "ok" and r.charging)
 
-        self._text(16, 15, "设备电量", 10, p.text, anchor="nw", bold=True)
-        if online == len(readings):
-            head = f"{len(readings)} 台已连接"
-        else:
-            head = f"{online}/{len(readings)} 台在线"
+        pen.text(16, 13, "设备电量", 14, p.text, bold=True)
+        head = (f"{len(readings)} 台已连接" if online == len(readings)
+                else f"{online}/{len(readings)} 台在线")
         if charging:
             head += f" · {charging} 台充电中"
         stamp = time.strftime("%H:%M", time.localtime(self.service.last_update or time.time()))
-        self._text(16, 36, f"{head} · {stamp} 更新", 8, p.sub, anchor="nw")
+        pen.text(16, 32, f"{head} · {stamp} 更新", 11, p.sub)
 
-        # 齿轮
-        gx1, gy1 = self.W - 14 - 26, 12
-        self._round(gx1, gy1, gx1 + 26, gy1 + 26, 8, p.chip)
-        self._icon("gear", p.sub, gx1 + 13, gy1 + 13, 14)
-        self._hit(gx1 - 2, gy1 - 2, gx1 + 28, gy1 + 28, self._goto_settings)
+        gx, gy = self.W - 14 - 26, 12
+        pen.rr(gx, gy, gx + 26, gy + 26, 8, fill=p.chip)
+        pen.glyph("gear", p.sub, gx + 13, gy + 13, 14, 2.0)
+        self._hit(gx - 2, gy - 2, gx + 28, gy + 28, self._goto_settings)
 
         for idx, r in enumerate(readings):
-            self._draw_card(idx, r)
-        self._draw_footer()
+            self._draw_card(pen, idx, r)
+        self._draw_footer(pen)
 
-    def _draw_card(self, idx: int, r) -> None:
+    def _draw_card(self, pen: Pen, idx: int, r) -> None:
         p = self.pal
         x1, x2 = self.PAD, self.W - self.PAD
         y0 = self.TOP + idx * (self.CARD_H + self.GAP)
         y1 = y0 + self.CARD_H
         hovered = idx == self._hover
         is_ok = r.status == "ok" and r.percent is not None
-        lit = is_ok and bool(r.charging)
+        lit = bool(is_ok and r.charging)
 
-        self._round(x1, y0, x2, y1, 11, p.card_hover if hovered else p.card,
-                    p.info if lit else p.border)
+        pen.rr(x1, y0, x2, y1, 11, fill=p.card_hover if hovered else p.card,
+               outline=p.info if lit else p.border)
 
         fg, chip_bg = device_tint(r.key, p)
         if r.status == "offline":
             fg = p.faint
-        cxx, cyy = x1 + 12, y0 + 11
-        self._round(cxx, cyy, cxx + 38, cyy + 38, 11, chip_bg)
-        self._icon(GLYPH.get(r.key, "keyboard"), fg, cxx + 19, cyy + 19, 19)
+        cx, cy = x1 + 41, y0 + self.CARD_H / 2
+        pen.rr(cx - 27, cy - 27, cx + 27, cy + 27, 27, fill=chip_bg)
+        if is_ok:
+            pct = max(0, min(100, int(r.percent)))
+            color = p.ok if pct >= 60 else (p.warn if pct >= 30 else p.bad)
+            pen.ring(cx, cy, 24, 4, pct / 100, color, mix_hex(color, chip_bg, 0.78))
+        else:
+            pen.ring(cx, cy, 24, 4, 0, p.track, p.chip)
+        pen.glyph(GLYPH.get(r.key, "keyboard"), fg, cx, cy, 21, 1.9)
 
-        self._text(x1 + 60, y0 + 13, r.name, 9, p.text if r.status != "offline" else p.sub,
-                   anchor="nw", bold=True)
-        self._text(x1 + 60, y0 + 34, self._meta(r), 8,
-                   p.info_text if lit else p.sub, anchor="nw")
+        # 文字列
+        tx = x1 + 80
+        pen.text(tx, y0 + 17, r.name, 12, p.text if r.status != "offline" else p.sub,
+                 anchor="lm", bold=True)
+        pen.text(tx, y0 + 40, self._meta(r), 11,
+                 p.info_text if lit else p.sub, anchor="lm")
 
+        # 右侧：百分比 / 状态胶囊
         xr = x2 - 14
         if is_ok:
             pct = max(0, min(100, int(r.percent)))
             color = p.ok_text if pct >= 60 else (p.warn_text if pct >= 30 else p.bad_text)
-            item = self._text(xr - 10, y0 + 12, str(pct), 14, color, anchor="ne", bold=True)
-            self._text(xr, y0 + 17, "%", 8, color, anchor="ne")
+            sig_w = pen.width("%", 11, True)
+            pen.text(xr, y0 + 48, "%", 11, color, anchor="rs", bold=True)
+            num = str(pct)
+            pen.text(xr - sig_w - 1, y0 + 48, num, 24, color, anchor="rs", bold=True)
             if r.charging:
-                bb = self.canvas.bbox(item)
-                if bb:
-                    self._icon("bolt", p.info_text, bb[0] - 8, (bb[1] + bb[3]) / 2, 12)
+                num_w = pen.width(num, 24, True)
+                pen.glyph("bolt", p.info_text, xr - sig_w - num_w - 10, y0 + 36, 12, 1.6)
         else:
             label = {"sleep": "休眠", "offline": "离线", "pending": "待探测"}.get(r.status, "读取失败")
-            self._round(xr - 46, y0 + 14, xr, y0 + 34, 7, p.chip)
-            self._text(xr - 23, y0 + 24, label, 8, p.faint, anchor="center")
-
-        bx1, bx2, by = x1 + 60, xr - 2, y0 + 58
-        self._round(bx1, by, bx2, by + 4, 2, p.track)
-        if is_ok:
-            ratio = max(0, min(100, int(r.percent))) / 100
-            w = max(8, int((bx2 - bx1) * ratio))
-            color = p.ok if r.percent >= 60 else (p.warn if r.percent >= 30 else p.bad)
-            self._round(bx1, by, bx1 + w, by + 4, 2, color)
+            w = max(46, pen.width(label, 11) + 20)
+            pen.rr(xr - w, y0 + 28, xr, y0 + 50, 11, fill=p.chip)
+            pen.text(xr - w / 2, y0 + 39, label, 11, p.faint, anchor="mm")
 
         self._hit(x1, y0, x2, y1, lambda k=r.key: self._refresh_one(k))
 
     def _meta(self, r) -> str:
-        """状态词已经由右侧胶囊表达，这里只补「设备类型 + 时间/上次读数」。"""
+        """状态词由右侧胶囊表达，这里只补「设备类型 + 时间/上次读数」。"""
         kind = KIND.get(r.key, "")
         if r.status == "ok":
             tail = f"正在充电 · {_ago(r.updated)}" if r.charging else _ago(r.updated)
@@ -387,107 +453,105 @@ class Panel:
             tail = f"上次 {r.percent}%" if r.percent is not None else "暂无读数"
         return " · ".join(x for x in (kind, tail) if x)
 
-    def _draw_footer(self) -> None:
+    def _draw_footer(self, pen: Pen) -> None:
         p = self.pal
         y = 318
-        self.canvas.create_line(self.PAD, y, self.W - self.PAD, y, fill=p.divider)
+        pen.line(self.PAD, y, self.W - self.PAD, y, p.divider)
         on = bool(self.cfg.get("low_battery_alert", True))
         th = int(self.cfg.get("low_battery_threshold", 20))
         color = p.sub if on else p.faint
-        self._icon("bell", color, self.PAD + 7, y + 22, 12)
-        self._text(self.PAD + 18, y + 22, f"低电提醒 {th}%" if on else "低电提醒已关闭",
-                   8, color, anchor="w")
+        pen.glyph("bell", color, self.PAD + 7, y + 21, 12, 1.6)
+        pen.text(self.PAD + 17, y + 21, f"低电提醒 {th}%" if on else "低电提醒已关闭",
+                 11, color, anchor="lm")
 
-        bw = 62
-        self._hit(self.W - self.PAD - bw, y + 8, self.W - self.PAD, y + 36, self._refresh_all)
-        self._text(self.W - self.PAD, y + 22, "立即刷新", 8, p.accent, anchor="e", bold=True)
+        self._hit(self.W - self.PAD - 62, y + 6, self.W - self.PAD, y + 36, self._refresh_all)
+        pen.text(self.W - self.PAD, y + 21, "立即刷新", 11, p.accent, anchor="rm", bold=True)
 
     # ---------- 设置页 ----------
-    def _draw_settings(self) -> None:
+    def _draw_settings(self, pen: Pen) -> None:
         p = self.pal
-        self._round(self.PAD, 12, self.PAD + 26, 38, 8, p.chip)
-        self._icon("back", p.sub, self.PAD + 13, 25, 13)
+        pen.rr(self.PAD, 12, self.PAD + 26, 38, 8, fill=p.chip)
+        pen.glyph("back", p.sub, self.PAD + 13, 25, 13, 2.1)
         self._hit(self.PAD - 2, 10, self.PAD + 30, 40, self._goto_main)
-        self._text(self.PAD + 38, 25, "设置", 10, p.text, anchor="w", bold=True)
+        pen.text(self.PAD + 38, 25, "设置", 14, p.text, anchor="lm", bold=True)
 
         # 显示
-        self._text(self.PAD + 4, 58, "显示", 8, p.faint, anchor="w")
-        self._round(self.PAD, 68, self.W - self.PAD, 146, 11, p.card, p.border)
-        self._text(self.PAD + 16, 87, "任务栏图标", 9, p.text)
-        seg_l, seg_r = self.W - self.PAD - 12, self.PAD + 16
+        pen.text(self.PAD + 4, 58, "显示", 11, p.faint, anchor="lm")
+        pen.rr(self.PAD, 68, self.W - self.PAD, 146, 11, fill=p.card, outline=p.border)
+        pen.text(self.PAD + 16, 87, "任务栏图标", 12, p.text, anchor="lm")
         mode = "multi" if self.cfg.get("display_mode") == "multi" else "single"
-        self._seg(self.W - self.PAD - 12, 87, [
+        self._seg(pen, self.W - self.PAD - 12, 87, [
             ("单个", mode == "single", lambda: self._set_mode("single")),
             ("三个", mode == "multi", lambda: self._set_mode("multi")),
         ], 42)
-        self.canvas.create_line(seg_r, 107, seg_l, 107, fill=p.divider)
-        self._text(self.PAD + 16, 127, "刷新间隔", 9, p.text)
+        pen.line(self.PAD + 16, 107, self.W - self.PAD - 16, 107, p.divider)
+        pen.text(self.PAD + 16, 127, "刷新间隔", 12, p.text, anchor="lm")
         iv = int(self.service.interval)
-        self._seg(self.W - self.PAD - 12, 127, [
+        self._seg(pen, self.W - self.PAD - 12, 127, [
             ("15 分", iv <= 900, lambda: self._set_interval(900)),
             ("30 分", 900 < iv <= 1800, lambda: self._set_interval(1800)),
             ("60 分", iv > 1800, lambda: self._set_interval(3600)),
         ], 44)
 
         # 提醒
-        self._text(self.PAD + 4, 161, "提醒", 8, p.faint, anchor="w")
-        self._round(self.PAD, 170, self.W - self.PAD, 248, 11, p.card, p.border)
+        pen.text(self.PAD + 4, 161, "提醒", 11, p.faint, anchor="lm")
+        pen.rr(self.PAD, 170, self.W - self.PAD, 248, 11, fill=p.card, outline=p.border)
         on = bool(self.cfg.get("low_battery_alert", True))
-        self._text(self.PAD + 16, 182, "低电量通知", 9, p.text)
-        self._text(self.PAD + 16, 198, "低于阈值时在右下角弹出", 8, p.faint)
-        self._toggle(self.W - self.PAD - 14, 189, on, lambda: self._set_alert(not on))
-        self.canvas.create_line(self.PAD + 16, 209, self.W - self.PAD - 16, 209, fill=p.divider)
-        self._text(self.PAD + 16, 229, "提醒阈值", 9, p.text if on else p.faint)
+        pen.text(self.PAD + 16, 183, "低电量通知", 12, p.text, anchor="lm")
+        pen.text(self.PAD + 16, 199, "低于阈值时在右下角弹出", 10, p.faint, anchor="lm")
+        self._toggle(pen, self.W - self.PAD - 14, 189, on, lambda: self._set_alert(not on))
+        pen.line(self.PAD + 16, 209, self.W - self.PAD - 16, 209, p.divider)
+        pen.text(self.PAD + 16, 229, "提醒阈值", 12, p.text if on else p.faint, anchor="lm")
         th = int(self.cfg.get("low_battery_threshold", 20))
-        cx = self.W - self.PAD - 12 - 38 * 4 - 6 * 3
+        cxx = self.W - self.PAD - 12 - 38 * 4 - 6 * 3
         for t in THRESHOLD_CHOICES:
             sel = th == t
             fill, line, fg = self._sel_colors() if sel else (p.chip, p.chip, p.sub)
-            self._round(cx, 218, cx + 38, 240, 7, fill, line)
-            self._text(cx + 19, 229, f"{t}%", 8, fg, anchor="center", bold=sel)
-            self._hit(cx, 216, cx + 38, 242, lambda t=t: self._set_threshold(t))
-            cx += 44
+            pen.rr(cxx, 218, cxx + 38, 240, 7, fill=fill, outline=line)
+            pen.text(cxx + 19, 229, f"{t}%", 11, fg, anchor="mm", bold=sel)
+            self._hit(cxx, 216, cxx + 38, 242, lambda t=t: self._set_threshold(t))
+            cxx += 44
 
         # 通用
-        self._text(self.PAD + 4, 263, "通用", 8, p.faint, anchor="w")
-        self._round(self.PAD, 272, self.W - self.PAD, 368, 11, p.card, p.border)
+        pen.text(self.PAD + 4, 263, "通用", 11, p.faint, anchor="lm")
+        pen.rr(self.PAD, 272, self.W - self.PAD, 368, 11, fill=p.card, outline=p.border)
         auto = bool(self.ctrl and self.ctrl.autostart_enabled())
-        self._text(self.PAD + 16, 288, "开机自动启动", 9, p.text)
-        self._toggle(self.W - self.PAD - 14, 288, auto, self._toggle_autostart)
-        self.canvas.create_line(self.PAD + 16, 304, self.W - self.PAD - 16, 304, fill=p.divider)
-        self._text(self.PAD + 16, 320, "打开数据目录", 9, p.text)
-        self._icon("chevron", p.faint, self.W - self.PAD - 18, 320, 12)
+        pen.text(self.PAD + 16, 288, "开机自动启动", 12, p.text, anchor="lm")
+        self._toggle(pen, self.W - self.PAD - 14, 288, auto, self._toggle_autostart)
+        pen.line(self.PAD + 16, 304, self.W - self.PAD - 16, 304, p.divider)
+        pen.text(self.PAD + 16, 320, "打开数据目录", 12, p.text, anchor="lm")
+        pen.glyph("chevron", p.faint, self.W - self.PAD - 18, 320, 12, 2.0)
         self._hit(self.PAD, 304, self.W - self.PAD, 336, self._open_logs)
-        self.canvas.create_line(self.PAD + 16, 336, self.W - self.PAD - 16, 336, fill=p.divider)
-        self._text(self.PAD + 16, 352, "退出程序", 9, p.bad_text)
-        self._text(self.W - self.PAD - 16, 352, f"BatteryTray v{VERSION}", 7, p.faint, anchor="e")
+        pen.line(self.PAD + 16, 336, self.W - self.PAD - 16, 336, p.divider)
+        pen.text(self.PAD + 16, 352, "退出程序", 12, p.bad_text, anchor="lm")
+        pen.text(self.W - self.PAD - 16, 352, f"BatteryTray v{VERSION}", 10, p.faint, anchor="rm")
         self._hit(self.PAD, 336, self.W - self.PAD, 368, self._quit)
 
     def _sel_colors(self) -> tuple[str, str, str]:
         return SEL["dark"] if self.pal.dark else SEL["light"]
 
-    def _seg(self, x_right: float, cy: float, items, w_each: float) -> None:
+    def _seg(self, pen: Pen, x_right: float, cy: float, items, w_each: float) -> None:
         p = self.pal
         total = w_each * len(items) + 4
         x1 = x_right - total
-        self._round(x1, cy - 13, x_right, cy + 13, 8, p.chip)
+        pen.rr(x1, cy - 13, x_right, cy + 13, 8, fill=p.chip)
         for i, (label, selected, cb) in enumerate(items):
             ix1 = x1 + 2 + i * w_each
             if selected:
-                self._round(ix1, cy - 11, ix1 + w_each, cy + 11, 6, p.card, p.border)
-            self._text(ix1 + w_each / 2, cy, label, 8,
-                       p.accent if selected else p.sub, anchor="center", bold=selected)
+                pen.rr(ix1, cy - 11, ix1 + w_each, cy + 11, 6, fill=p.card, outline=p.border)
+            pen.text(ix1 + w_each / 2, cy + 0.5, label, 11,
+                     p.accent if selected else p.sub, anchor="mm", bold=selected)
             self._hit(ix1, cy - 13, ix1 + w_each, cy + 13, cb)
 
-    def _toggle(self, x_right: float, cy: float, on: bool, cb) -> None:
+    def _toggle(self, pen: Pen, x_right: float, cy: float, on: bool, cb) -> None:
         p = self.pal
         w, h = 34, 19
         x1 = x_right - w
-        self._round(x1, cy - h / 2, x_right, cy + h / 2, h / 2,
-                    p.accent if on else p.toggle_off)
+        pen.rr(x1, cy - h / 2, x_right, cy + h / 2, h / 2,
+               fill=p.accent if on else p.toggle_off)
         kx = x_right - 2 - 7.5 if on else x1 + 2 + 7.5
-        self.canvas.create_oval(kx - 6.5, cy - 6.5, kx + 6.5, cy + 6.5,
-                                fill="#FFFFFF", outline="")
+        pen.d.ellipse([(kx - 6.5) * SS, (cy - 6.5) * SS, (kx + 6.5) * SS, (cy + 6.5) * SS],
+                      fill="#FFFFFF")
         self._hit(x1 - 4, cy - 12, x_right + 4, cy + 12, cb)
 
     # ---------- 动作 ----------

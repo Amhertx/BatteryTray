@@ -10,6 +10,7 @@ import tkinter as tk
 import pystray
 from pystray import Menu, MenuItem as Item
 
+from . import diag, notify_area
 from .config import (ALERT_HYSTERESIS, APP_DIR, APP_NAME, DEVICES, THRESHOLD_CHOICES,
                      save)
 from .icons import battery_icon, device_icon
@@ -65,6 +66,21 @@ class TrayController:
     # ---------- 生命周期 ----------
     def start(self) -> None:
         self._build()
+        threading.Timer(2.5, self._post_start).start()
+
+    def _post_start(self) -> None:
+        """图标注册完再处理「常显」与首次提示（此时系统才建好登记项）。"""
+        try:
+            n = notify_area.promote(sys.executable)
+            diag.note(f"notify_area.promote({sys.executable}) -> {n}")
+        except Exception as exc:  # noqa: BLE001
+            diag.note(f"notify_area.promote failed: {exc!r}")
+        if not self.cfg.get("start_hint_shown"):
+            self.cfg["start_hint_shown"] = True
+            save(self.cfg)
+            self._notify("BatteryTray 已在后台运行",
+                         "图标在右下角通知区。如果没看到，点任务栏的 ^ 展开，"
+                         "把图标拖到任务栏上即可一直显示。")
 
     def _build(self) -> None:
         self._stop_icons()

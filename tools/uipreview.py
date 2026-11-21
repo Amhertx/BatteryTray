@@ -12,7 +12,6 @@ import tkinter as tk
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PIL import ImageGrab  # noqa: E402
 
 from btray.config import DEVICES, DEFAULTS  # noqa: E402
 from btray.model import Reading  # noqa: E402
@@ -65,9 +64,9 @@ def main() -> None:
 
     def shot(name: str) -> None:
         panel.win.update()
-        x, y = panel.win.winfo_rootx(), panel.win.winfo_rooty()
-        img = ImageGrab.grab(bbox=(x - 8, y - 8, x + panel.W + 8, y + panel.H + 8))
-        img.save(os.path.join(OUT, name))
+        panel._draw()
+        # 直接存 2 倍渲染位图，避免抓屏受窗口位置 / DPI 影响
+        panel._img.save(os.path.join(OUT, name))
 
     steps = [
         lambda: (setattr(panel, "pal", theme.LIGHT), setattr(panel, "view", "main"),
