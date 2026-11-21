@@ -2,7 +2,9 @@
 
 在 Windows 任务栏右下角显示三台 2.4G 无线设备的**电量与充电状态**：索尼 INZONE H9 二代、雷蛇 炼狱蝰蛇 V3 Pro、狼蛛 F87 Pro。
 
-**双击 `BatteryTray.exe` 即可运行**，单文件绿色版，不需要装 Python 或任何运行库。
+**双击 `BatteryTray.exe` 即可运行**，单文件绿色版（约 19MB），不需要装 Python 或任何运行库。
+
+**[⬇ 下载最新版 v1.4](https://github.com/Amhertx/BatteryTray/releases/download/v1.4/BatteryTray.exe)** · [全部版本](https://github.com/Amhertx/BatteryTray/releases)
 
 > 这三台设备在 Windows 上都没有原生电量 API（`Get-PnpDevice -Class Battery` 为空、`root\wmi` 无 `BatteryStatus` 实例），所以全部走各自的厂商 HID 协议，逐个逆向实测得出。
 
