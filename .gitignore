@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# 编译产物：exe 通过 GitHub Releases 分发，不进仓库
+*.exe
+
+# 调试截图与临时产物
+*.png
+*.jpg
+*.log
+
+# 编辑器
+.idea/
+.vscode/
