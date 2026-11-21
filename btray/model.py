@@ -31,10 +31,20 @@ class Reading:
     detail: str = ""
     verified: bool = True
     updated: float = field(default_factory=time.time)
+    charged_days: int | None = None   # 距上次观察到「正在充电」的整数天数
 
     @property
     def online(self) -> bool:
         return self.status in ("ok", "sleep", "pending")
+
+    @property
+    def charge_note(self) -> str:
+        """「今天充过 / 3 天前充过」；没有充电记录时为空串。"""
+        if self.charged_days is None:
+            return ""
+        if self.charged_days <= 0:
+            return "今天充过"
+        return f"{self.charged_days} 天前充过"
 
     @property
     def label(self) -> str:
@@ -52,4 +62,10 @@ class Reading:
         tail = ""
         if self.status != "ok" and self.detail:
             tail = f"（{self.detail}）"
-        return f"{self.name}  {self.label}{tail}"
+        line = f"{self.name}  {self.label}{tail}"
+        # 正在充电时「今天充过」是废话，只在没在充的时候补天数
+        if self.charge_note and not (self.status == "ok" and self.charging):
+            line += f"  ·  {self.charge_note}"
+        elif self.status == "ok" and self.charged_days is None:
+            line += "  ·  尚无充电记录"
+        return line

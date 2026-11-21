@@ -59,19 +59,6 @@ def hide_from_taskbar(win: tk.Misc, force: bool = False) -> None:
         pass
 
 
-def _ago(ts: float) -> str:
-    if not ts:
-        return ""
-    delta = max(0, int(time.time() - ts))
-    if delta < 60:
-        return "刚刚"
-    if delta < 3600:
-        return f"{delta // 60} 分钟前"
-    if delta < 86400:
-        return f"{delta // 3600} 小时前"
-    return f"{delta // 86400} 天前"
-
-
 class Pen:
     """在超采样画布上绘制：入参都是逻辑像素，内部统一乘 SS。"""
 
@@ -445,13 +432,20 @@ class Panel:
         self._hit(x1, y0, x2, y1, lambda k=r.key: self._refresh_one(k))
 
     def _meta(self, r) -> str:
-        """状态词由右侧胶囊表达，这里只补「设备类型 + 时间/上次读数」。"""
+        """状态词由右侧胶囊表达，这里补「设备类型 + 状态 + 距上次充电几天」。"""
         kind = KIND.get(r.key, "")
+        parts = [kind]
         if r.status == "ok":
-            tail = f"正在充电 · {_ago(r.updated)}" if r.charging else _ago(r.updated)
+            parts.append("正在充电" if r.charging else "使用电池")
+            # 正在充电时「今天充过」没有信息量，省掉
+            if not r.charging:
+                parts.append(r.charge_note)
+        elif r.percent is not None:
+            parts.append(f"上次 {r.percent}%")
+            parts.append(r.charge_note)
         else:
-            tail = f"上次 {r.percent}%" if r.percent is not None else "暂无读数"
-        return " · ".join(x for x in (kind, tail) if x)
+            parts.append(r.charge_note)
+        return " · ".join(x for x in parts if x)
 
     def _draw_footer(self, pen: Pen) -> None:
         p = self.pal

@@ -28,11 +28,11 @@ class StubService:
     def __init__(self):
         self._r = [
             Reading(key="sony_h9", name=DEVICES[0]["name"], short="H9", percent=49,
-                    charging=False, status="ok", updated=time.time() - 7200),
+                    charging=False, status="ok", updated=time.time() - 7200, charged_days=12),
             Reading(key="razer_dav3", name=DEVICES[1]["name"], short="DA", percent=100,
-                    charging=False, status="ok", updated=time.time() - 7200),
+                    charging=False, status="ok", updated=time.time() - 7200, charged_days=3),
             Reading(key="aula_f87", name=DEVICES[2]["name"], short="F8", percent=85,
-                    charging=True, status="ok", updated=time.time() - 120),
+                    charging=True, status="ok", updated=time.time() - 120, charged_days=0),
         ]
 
     def snapshot(self):

@@ -14,7 +14,9 @@ dist/
 # 调试截图与临时产物
 *.png
 *.jpg
+*.gif
 *.log
+preview/
 
 # 编辑器
 .idea/

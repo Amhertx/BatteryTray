@@ -5,6 +5,7 @@ import threading
 import time
 
 from .config import DEVICES
+from .history import history
 from .model import Reading
 from .providers import build_providers
 
@@ -18,7 +19,8 @@ class BatteryService:
         self._providers = build_providers(cfg)
         self._lock = threading.Lock()
         self._readings: dict[str, Reading] = {
-            d["key"]: Reading(key=d["key"], name=d["name"], short=d["short"], status="offline", detail="尚未读取")
+            d["key"]: Reading(key=d["key"], name=d["name"], short=d["short"], status="offline",
+                              detail="尚未读取", charged_days=history.days_since(d["key"]))
             for d in DEVICES
         }
         self._fails: dict[str, int] = {d["key"]: 0 for d in DEVICES}
@@ -116,6 +118,11 @@ class BatteryService:
                 # 真异常才指数退避，最多 3 倍间隔，避免对故障设备反复开句柄
                 factor = min(2 ** min(self._fails[key] - 1, 2), 3)
                 self._next_due[key] = now + self.interval * factor
+
+            # 顺手记一笔充电日期，用于「N 天前充过」；同一天只落盘一次
+            if reading.status == "ok" and reading.charging:
+                history.note_charging(key)
+            reading.charged_days = history.days_since(key)
 
             with self._lock:
                 prev = self._readings.get(key)
