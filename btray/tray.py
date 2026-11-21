@@ -19,9 +19,9 @@ from .icons import battery_icon, device_icon
 AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 # 充电动画：从当前电量涨到 100% 用 SWEEP 秒，涨满停 HOLD 秒再来一轮
-ANIM_SWEEP = 2.4
-ANIM_HOLD = 0.9
-ANIM_TICK_MS = 150
+ANIM_PERIOD = 1.4
+# 呼吸一周期 1.4s：快于 1.5s 会像闪烁，慢于 2s 又容易被忽略
+ANIM_TICK_MS = 100
 
 
 def _autostart_command() -> str:
@@ -312,8 +312,7 @@ class TrayController:
     # ---------- 视觉刷新 ----------
     def _phase(self) -> float:
         """充电动画进度 0~1：等于「当前电量→100%」这段已经涨了多少。"""
-        t = (time.time() - self._anim_t0) % (ANIM_SWEEP + ANIM_HOLD)
-        return min(1.0, t / ANIM_SWEEP)
+        return ((time.time() - self._anim_t0) % ANIM_PERIOD) / ANIM_PERIOD
 
     def _charging_keys(self) -> list[str]:
         return [r.key for r in self.service.snapshot()

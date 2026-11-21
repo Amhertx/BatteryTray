@@ -19,6 +19,7 @@ GRAY = (148, 155, 164)
 GREEN = (34, 197, 94)
 AMBER = (245, 158, 11)
 RED = (239, 68, 68)
+TRACK = (188, 194, 202)
 
 ACCENT = {
     "sony_h9": (59, 130, 246),     # 蓝
@@ -48,25 +49,27 @@ def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[in
 
 
 # ---------------- 设备图形遮罩（64 空间） ----------------
+# 16px 下每个像素 = 4 个 64 空间单位，所以特征必须 ≥8 单位（2px）才立得住。
+# 键盘原来 8 个小键（9×5）缩下去只有 2×1px，看起来是一排噪点；改成 3 大键 × 2 行。
 def _mask_headset(d) -> None:
-    d.arc((12, 4, 52, 44), 180, 360, fill=255, width=12)
-    d.rounded_rectangle((4, 22, 20, 52), radius=8, fill=255)
-    d.rounded_rectangle((44, 22, 60, 52), radius=8, fill=255)
+    d.arc((13, 1, 51, 41), 180, 360, fill=255, width=13)
+    d.rounded_rectangle((1, 17, 18, 45), radius=7, fill=255)
+    d.rounded_rectangle((46, 17, 63, 45), radius=7, fill=255)
 
 
 def _mask_mouse(d) -> None:
-    d.rounded_rectangle((18, 2, 46, 52), radius=14, fill=255)
-    d.rectangle((30, 2, 34, 20), fill=0)      # 中缝
-    d.rectangle((20, 22, 44, 25), fill=0)     # 左右键分隔
+    d.rounded_rectangle((16, 1, 48, 45), radius=14, fill=255)
+    d.rectangle((30, 1, 34, 17), fill=0)       # 中缝
+    d.rectangle((17, 19, 47, 23), fill=0)      # 左右键分隔
 
 
 def _mask_keyboard(d) -> None:
-    d.rounded_rectangle((2, 16, 62, 46), radius=8, fill=255)
-    for row in range(2):
-        y = 24 + row * 10
-        for col in range(4):
-            x = 9 + col * 13
-            d.rectangle((x, y, x + 9, y + 5), fill=0)
+    d.rounded_rectangle((2, 9, 62, 45), radius=7, fill=255)
+    for row, y in enumerate((15, 28)):
+        for col in range(3):
+            x = 9 + col * 17
+            d.rounded_rectangle((x, y, x + 12, y + 8), radius=2, fill=0)
+    d.rounded_rectangle((9, 40, 55, 45), radius=2, fill=0)
 
 
 _MASKS = {"headset": _mask_headset, "mouse": _mask_mouse, "keyboard": _mask_keyboard}
@@ -81,33 +84,24 @@ def _glyph_layer(kind: str, color: tuple[int, int, int]) -> Image.Image:
 
 
 def _draw_bar(draw, percent: int | None, charge: float | None = None,
-              top: int = 54, bottom: int = 63) -> None:
-    """底部电量条。
+              left: int = 5, right: int = 59, top: int = 51, bottom: int = 62) -> None:
+    """底部电量条（64 空间里 11 单位高 → 16px 下约 2.75px）。
 
-    charge 是充电动画进度（0~1）：从**当前电量**继续往 100% 涨，不是从 0 涨起，
-    所以一眼能看出「现在多少、还差多少」。涨的那段用提亮色，和已充满段区分开。
+    长度 = 电量，充电时整条在**同一种颜色**里呼吸（深 ↔ 浅，色相不变）。
+    为什么不用「从当前电量补满」的涨条：电量到 99% 时只剩 0.15px 可涨，等于没有动画；
+    呼吸与剩余空间无关，任何电量都看得见。
     """
-    draw.rounded_rectangle((2, top, 62, bottom), radius=4, fill=(203, 208, 215, 255))
+    draw.rounded_rectangle((left, top, right, bottom), radius=5, fill=TRACK + (255,))
     if percent is None:
         return
     pct = min(100, max(0, percent))
-    width = max(6, int(60 * pct / 100))
-    base = level_color(pct)
-    draw.rounded_rectangle((2, top, 2 + width, bottom), radius=4, fill=base)
-    if charge is None:
-        return
-    charge = max(0.0, min(1.0, charge))
-    if pct < 100:
-        end = pct + (100 - pct) * charge
-        grow_w = int(60 * end / 100)
-        if grow_w > width:
-            draw.rounded_rectangle((2 + width - 3, top, 2 + grow_w, bottom), radius=4,
-                                   fill=_mix(base, (255, 255, 255), 0.6))
-    else:
-        # 已经 100% 还在充：整条做一个呼吸提亮，否则看不出还在充电
-        k = 0.5 - 0.5 * math.cos(2 * math.pi * charge)
-        draw.rounded_rectangle((2, top, 62, bottom), radius=4,
-                               fill=_mix(base, (255, 255, 255), 0.55 * k))
+    color = level_color(pct)
+    if charge is not None:
+        wave = 0.5 - 0.5 * math.cos(2 * math.pi * max(0.0, min(1.0, charge)))
+        color = _mix(TRACK, color, 0.38 + 0.62 * wave)
+    span = right - left
+    width = max(5, int(span * pct / 100))
+    draw.rounded_rectangle((left, top, left + width, bottom), radius=5, fill=color)
 
 
 # ---------------- 对外接口 ----------------
@@ -125,7 +119,7 @@ def device_icon(key: str, percent: int | None, status: str = "ok",
     live = status == "ok"
     _draw_bar(d, percent if live else None,
               (charge or 0.0) if (charging and live) else None)
-    return img.resize((BASE, BASE), Image.LANCZOS)
+    return img.resize((BASE, BASE), Image.BOX)
 
 
 def battery_icon(percent: int | None, status: str = "ok", charging: bool = False) -> Image.Image:
@@ -154,7 +148,7 @@ def battery_icon(percent: int | None, status: str = "ok", charging: bool = False
             d.polygon([(x + dx, y + dy) for x, y in poly], fill=(28, 32, 40, 255))
         d.polygon(poly, fill=(255, 255, 255, 255))
 
-    return img.resize((BASE, BASE), Image.LANCZOS)
+    return img.resize((BASE, BASE), Image.BOX)
 
 
 def make_ico(path: str) -> None:

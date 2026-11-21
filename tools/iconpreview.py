@@ -18,7 +18,7 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "preview")
 ZOOM = 8
 PHASES = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 CASES = [
-    ("aula_f87", 85, True),
+    ("aula_f87", 99, True),
     ("sony_h9", 49, True),
     ("razer_dav3", 22, True),
     ("aula_f87", 100, True),
@@ -46,12 +46,29 @@ def strip(bg) -> Image.Image:
     return out
 
 
+def actual_size() -> Image.Image:
+    """1x 实际大小，贴在两种任务栏底色上，用来判断真机观感。"""
+    keys = [("aula_f87", 99), ("sony_h9", 49), ("razer_dav3", 22), ("aula_f87", 100)]
+    pad = 8
+    w = pad * 2 + len(keys) * (BASE + pad)
+    out = Image.new("RGB", (w, BASE * 2 + pad * 3), BG_LIGHT)
+    for row, bg in enumerate((BG_LIGHT, BG_DARK)):
+        out.paste(Image.new("RGB", (w, BASE + pad), bg), (0, pad // 2 + row * (BASE + pad * 2)))
+        for i, (key, pct) in enumerate(keys):
+            icon = device_icon(key, pct, "ok", True, 0.55)
+            out.paste(icon, (pad + i * (BASE + pad), pad + row * (BASE + pad * 2)), icon)
+    return out.resize((w * 4, (BASE * 2 + pad * 3) * 4), Image.NEAREST)
+
+
 def main() -> None:
     os.makedirs(OUT, exist_ok=True)
     img = strip(BG_LIGHT)
     path = os.path.join(OUT, "icon_phases.png")
     img.save(path)
     print("saved", path, img.size)
+    p2 = os.path.join(OUT, "icon_actual.png")
+    actual_size().save(p2)
+    print("saved", p2)
 
 
 if __name__ == "__main__":
