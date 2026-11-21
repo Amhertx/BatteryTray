@@ -8,15 +8,16 @@ import time
 from pathlib import Path
 
 APP_NAME = "BatteryTray"
+VERSION = "1.2"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 AUDIT_PATH = APP_DIR / "audit.log"
 
 # 设备注册表：VID/PID 来自本机实测枚举结果
 DEVICES = [
-    {"key": "sony_h9", "name": "索尼 INZONE H9 二代", "short": "H9", "vid": 0x054C, "pid": 0x0FA8, "provider": "sony"},
-    {"key": "razer_dav3", "name": "雷蛇 炼狱蝰蛇 V3 Pro", "short": "DA", "vid": 0x1532, "pid": 0x00B7, "provider": "razer"},
-    {"key": "aula_f87", "name": "狼蛛 F87 Pro", "short": "F8", "vid": 0x3554, "pid": 0xFA09, "provider": "aula"},
+    {"key": "sony_h9", "name": "索尼 INZONE H9 二代", "kind": "耳机", "short": "H9", "vid": 0x054C, "pid": 0x0FA8, "provider": "sony"},
+    {"key": "razer_dav3", "name": "雷蛇 炼狱蝰蛇 V3 Pro", "kind": "鼠标", "short": "DA", "vid": 0x1532, "pid": 0x00B7, "provider": "razer"},
+    {"key": "aula_f87", "name": "狼蛛 F87 Pro", "kind": "键盘", "short": "F8", "vid": 0x3554, "pid": 0xFA09, "provider": "aula"},
 ]
 
 DEFAULTS = {

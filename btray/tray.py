@@ -257,6 +257,32 @@ class TrayController:
                 # 回升到阈值以上一定幅度才重新武装，防止在临界点反复弹
                 self._alerted.pop(r.key, None)
 
+    # ---------- 供面板调用 ----------
+    def autostart_enabled(self) -> bool:
+        try:
+            return is_autostart()
+        except Exception:  # noqa: BLE001
+            return False
+
+    def set_display_mode(self, mode: str) -> None:
+        self._set_mode(mode)
+
+    def set_alert(self, enabled: bool, threshold: int | None = None) -> None:
+        self._set_alert(enabled, threshold)
+
+    def set_poll_interval(self, seconds: int) -> None:
+        self.service.set_interval(seconds)
+        save(self.cfg)
+
+    def toggle_autostart(self) -> None:
+        self._toggle_autostart()
+
+    def open_logs(self) -> None:
+        self._open_logs()
+
+    def quit_app(self) -> None:
+        self._quit()
+
     # ---------- 视觉刷新 ----------
     def refresh_visuals(self) -> None:
         if self._pending_refresh:

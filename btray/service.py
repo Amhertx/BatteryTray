@@ -51,6 +51,22 @@ class BatteryService:
             self._next_due[key] = 0.0
         self._wake.set()
 
+    def refresh_device(self, key: str) -> None:
+        """只让某台设备立刻重读，其余保持原排程。"""
+        if key in self._next_due:
+            self._next_due[key] = 0.0
+        self._wake.set()
+
+    def set_interval(self, seconds: int) -> None:
+        """改轮询间隔：已排到更远未来的设备提前到「现在」，立即按新节奏生效。"""
+        self.cfg["poll_interval"] = max(30, int(seconds))
+        now = time.time()
+        for key, due in self._next_due.items():
+            if due > now + self.interval:
+                self._next_due[key] = now
+        self._wake.set()
+
+
     # ---------- 内部 ----------
     def _next_wait(self) -> float:
         """下一轮唤醒前要等多久：取最近到期设备的剩余时间，上限一个正常间隔。"""

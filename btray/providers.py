@@ -115,6 +115,10 @@ class RazerProvider(BaseProvider):
         if len(resp) < 12:
             return self.reading(status="error", detail="响应过短")
         if resp[1] != 0x02:
+            # 0x04 = 设备未就绪：2.4G 鼠标闲置进休眠时接收器会回这个码，
+            # 归到 sleep 走 5 分钟短间隔重试，比当故障做指数退避更合理。
+            if resp[1] == 0x04:
+                return self.reading(status="sleep", detail="设备未响应，可能已休眠")
             return self.reading(status="error", detail=f"设备返回状态 0x{resp[1]:02X}")
 
         idx = int(self.cfg.get("razer_level_byte", 10))

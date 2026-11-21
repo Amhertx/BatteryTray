@@ -51,6 +51,7 @@ def main() -> int:
 
     panel = Panel(root, service, cfg, on_refresh=service.refresh_now)
     tray = TrayController(service, cfg, panel, root)
+    panel.attach(tray)
     service.on_update = tray.refresh_visuals
 
     service.start()
