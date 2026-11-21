@@ -362,7 +362,7 @@ class Panel:
             if r.charging:
                 bb = self.canvas.bbox(item)
                 if bb:
-                    self._icon("bolt", p.info_text, bb[0] - 8, y0 + 21, 11)
+                    self._icon("bolt", p.info_text, bb[0] - 8, (bb[1] + bb[3]) / 2, 12)
         else:
             label = {"sleep": "休眠", "offline": "离线", "pending": "待探测"}.get(r.status, "读取失败")
             self._round(xr - 46, y0 + 14, xr, y0 + 34, 7, p.chip)
