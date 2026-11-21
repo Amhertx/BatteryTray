@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 
 import pystray
@@ -16,6 +17,11 @@ from .config import (ALERT_HYSTERESIS, APP_DIR, APP_NAME, DEVICES, THRESHOLD_CHO
 from .icons import battery_icon, device_icon
 
 AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+# 充电动画：从当前电量涨到 100% 用 SWEEP 秒，涨满停 HOLD 秒再来一轮
+ANIM_SWEEP = 2.4
+ANIM_HOLD = 0.9
+ANIM_TICK_MS = 150
 
 
 def _autostart_command() -> str:
@@ -62,11 +68,14 @@ class TrayController:
         self._lock = threading.Lock()
         self._pending_refresh = False
         self._alerted: dict[str, bool] = {}
+        self._anim_job = None
+        self._anim_t0 = time.time()
 
     # ---------- 生命周期 ----------
     def start(self) -> None:
         self._build()
         threading.Timer(2.5, self._post_start).start()
+        self._on_ui(self._start_anim)
 
     def _post_start(self) -> None:
         """图标注册完再处理「常显」与首次提示（此时系统才建好登记项）。"""
@@ -137,8 +146,9 @@ class TrayController:
             r = readings.get(key)
             if r is None:
                 return device_icon(key, None, "offline")
+            charging = bool(r.charging) and r.status == "ok"
             return device_icon(key, r.percent if r.status == "ok" else None, r.status,
-                               bool(r.charging))
+                               charging, self._phase() if charging else None)
         worst = self._worst(readings)
         if worst is None:
             return battery_icon(None, "pending")
@@ -300,6 +310,42 @@ class TrayController:
         self._quit()
 
     # ---------- 视觉刷新 ----------
+    def _phase(self) -> float:
+        """充电动画进度 0~1：等于「当前电量→100%」这段已经涨了多少。"""
+        t = (time.time() - self._anim_t0) % (ANIM_SWEEP + ANIM_HOLD)
+        return min(1.0, t / ANIM_SWEEP)
+
+    def _charging_keys(self) -> list[str]:
+        return [r.key for r in self.service.snapshot()
+                if r.status == "ok" and r.charging and r.percent is not None]
+
+    def _start_anim(self) -> None:
+        if self._anim_job is None and self.mode == "multi" and self._charging_keys():
+            self._pump_anim()
+
+    def _pump_anim(self) -> None:
+        """只重画充电中那几台的图标，其它图标不动。"""
+        self._anim_job = None
+        if self.mode != "multi" or not self._icons or not self._charging_keys():
+            return
+        self._paint_charging()
+        try:
+            self._anim_job = self.root.after(ANIM_TICK_MS, self._pump_anim)
+        except Exception:  # noqa: BLE001
+            self._anim_job = None
+
+    def _paint_charging(self) -> None:
+        readings = self._readings()
+        phase = self._phase()
+        for dev, icon in zip(DEVICES, self._icons):
+            r = readings.get(dev["key"])
+            if r is None or not r.charging or r.status != "ok" or r.percent is None:
+                continue
+            try:
+                icon.icon = device_icon(dev["key"], int(r.percent), r.status, True, phase)
+            except Exception:  # noqa: BLE001
+                pass
+
     def refresh_visuals(self) -> None:
         if self._pending_refresh:
             return
@@ -320,3 +366,4 @@ class TrayController:
             except Exception:  # noqa: BLE001
                 pass
         self._check_low_battery(self.service.snapshot())
+        self._start_anim()

@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+import math
+
 from PIL import Image, ImageDraw
 
 BASE = 16   # 托盘实际像素
@@ -39,6 +41,10 @@ def level_color(percent: int | None, status: str = "ok") -> tuple[int, int, int]
     if percent >= 30:
         return AMBER
     return RED
+
+
+def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    return tuple(round(x * (1 - t) + y * t) for x, y in zip(a, b))
 
 
 # ---------------- 设备图形遮罩（64 空间） ----------------
@@ -74,36 +80,51 @@ def _glyph_layer(kind: str, color: tuple[int, int, int]) -> Image.Image:
     return layer
 
 
-def _draw_bar(draw, percent: int | None, top: int = 54, bottom: int = 63) -> None:
-    draw.rounded_rectangle((2, top, 62, bottom), radius=4, fill=(203, 208, 215, 255))
-    if percent is not None:
-        width = max(6, int(60 * min(100, max(0, percent)) / 100))
-        draw.rounded_rectangle((2, top, 2 + width, bottom), radius=4, fill=level_color(percent))
+def _draw_bar(draw, percent: int | None, charge: float | None = None,
+              top: int = 54, bottom: int = 63) -> None:
+    """底部电量条。
 
-
-def _draw_bolt(draw) -> None:
-    """充电标记：右上角白色闪电。
-
-    16px 托盘里没有空间放文字，闪电是唯一能同时表达「充电中」又不牺牲电量条比例的标记。
-    先描一圈深色轮廓，保证在浅色任务栏上也能立住。
+    charge 是充电动画进度（0~1）：从**当前电量**继续往 100% 涨，不是从 0 涨起，
+    所以一眼能看出「现在多少、还差多少」。涨的那段用提亮色，和已充满段区分开。
     """
-    poly = [(57, 0), (46, 19), (54, 19), (48, 34), (63, 11), (55, 11), (61, 0)]
-    for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2)):
-        draw.polygon([(x + dx, y + dy) for x, y in poly], fill=(28, 32, 40, 255))
-    draw.polygon(poly, fill=(255, 255, 255, 255))
+    draw.rounded_rectangle((2, top, 62, bottom), radius=4, fill=(203, 208, 215, 255))
+    if percent is None:
+        return
+    pct = min(100, max(0, percent))
+    width = max(6, int(60 * pct / 100))
+    base = level_color(pct)
+    draw.rounded_rectangle((2, top, 2 + width, bottom), radius=4, fill=base)
+    if charge is None:
+        return
+    charge = max(0.0, min(1.0, charge))
+    if pct < 100:
+        end = pct + (100 - pct) * charge
+        grow_w = int(60 * end / 100)
+        if grow_w > width:
+            draw.rounded_rectangle((2 + width - 3, top, 2 + grow_w, bottom), radius=4,
+                                   fill=_mix(base, (255, 255, 255), 0.6))
+    else:
+        # 已经 100% 还在充：整条做一个呼吸提亮，否则看不出还在充电
+        k = 0.5 - 0.5 * math.cos(2 * math.pi * charge)
+        draw.rounded_rectangle((2, top, 62, bottom), radius=4,
+                               fill=_mix(base, (255, 255, 255), 0.55 * k))
 
 
 # ---------------- 对外接口 ----------------
 def device_icon(key: str, percent: int | None, status: str = "ok",
-                charging: bool = False) -> Image.Image:
-    """多图标模式：设备形状 + 底部电量条 + 充电闪电。"""
+                charging: bool = False, charge: float | None = None) -> Image.Image:
+    """多图标模式：设备形状 + 底部电量条。
+
+    充电时不再画闪电（16px 里和图形糊在一起），改成电量条从当前电量往 100% 涨：
+    charge 传动画进度 0~1；不传则停在当前电量。
+    """
     img = Image.new("RGBA", (N, N), (0, 0, 0, 0))
     color = ACCENT.get(key, GRAY) if status != "offline" else GRAY
     img.alpha_composite(_glyph_layer(GLYPH.get(key, "keyboard"), color))
     d = ImageDraw.Draw(img)
-    _draw_bar(d, percent if status == "ok" else None)
-    if charging and status == "ok":
-        _draw_bolt(d)
+    live = status == "ok"
+    _draw_bar(d, percent if live else None,
+              (charge or 0.0) if (charging and live) else None)
     return img.resize((BASE, BASE), Image.LANCZOS)
 
 
