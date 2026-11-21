@@ -23,6 +23,8 @@ CASES = [
     ("razer_dav3", 22, True),
     ("aula_f87", 100, True),
 ]
+# 关键帧对照：每台设备的「低点」与「到顶」并排，判断条长变化是否看得出来
+KEYFRAMES = [("aula_f87", 99), ("sony_h9", 49), ("razer_dav3", 22)]
 BG_LIGHT = (243, 243, 243)
 BG_DARK = (32, 32, 32)
 
@@ -47,17 +49,21 @@ def strip(bg) -> Image.Image:
 
 
 def actual_size() -> Image.Image:
-    """1x 实际大小，贴在两种任务栏底色上，用来判断真机观感。"""
-    keys = [("aula_f87", 99), ("sony_h9", 49), ("razer_dav3", 22), ("aula_f87", 100)]
+    """1x 实际大小（再放大 4 倍看），每台设备并排「低点 / 到顶」两帧。"""
     pad = 8
-    w = pad * 2 + len(keys) * (BASE + pad)
-    out = Image.new("RGB", (w, BASE * 2 + pad * 3), BG_LIGHT)
+    cols = len(KEYFRAMES) * 2
+    w = pad * 2 + cols * (BASE + pad)
+    h = BASE * 2 + pad * 3
+    out = Image.new("RGB", (w, h), BG_LIGHT)
     for row, bg in enumerate((BG_LIGHT, BG_DARK)):
         out.paste(Image.new("RGB", (w, BASE + pad), bg), (0, pad // 2 + row * (BASE + pad * 2)))
-        for i, (key, pct) in enumerate(keys):
-            icon = device_icon(key, pct, "ok", True, 0.55)
-            out.paste(icon, (pad + i * (BASE + pad), pad + row * (BASE + pad * 2)), icon)
-    return out.resize((w * 4, (BASE * 2 + pad * 3) * 4), Image.NEAREST)
+        for i, (key, pct) in enumerate(KEYFRAMES):
+            for j, ph in enumerate((0.0, 1.0)):
+                icon = device_icon(key, pct, "ok", True, ph)
+                x = pad + (i * 2 + j) * (BASE + pad)
+                y = pad + row * (BASE + pad * 2)
+                out.paste(icon, (x, y), icon)
+    return out.resize((w * 4, h * 4), Image.NEAREST)
 
 
 def main() -> None:

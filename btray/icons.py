@@ -8,8 +8,6 @@
 """
 from __future__ import annotations
 
-import math
-
 from PIL import Image, ImageDraw
 
 BASE = 16   # 托盘实际像素
@@ -42,10 +40,6 @@ def level_color(percent: int | None, status: str = "ok") -> tuple[int, int, int]
     if percent >= 30:
         return AMBER
     return RED
-
-
-def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
-    return tuple(round(x * (1 - t) + y * t) for x, y in zip(a, b))
 
 
 # ---------------- 设备图形遮罩（64 空间） ----------------
@@ -83,25 +77,33 @@ def _glyph_layer(kind: str, color: tuple[int, int, int]) -> Image.Image:
     return layer
 
 
+CHARGE_SPAN = 30   # 充电时条子从「电量 − 30 个百分点」爬到「电量」，16px 下位移约 4px
+
+
 def _draw_bar(draw, percent: int | None, charge: float | None = None,
               left: int = 5, right: int = 59, top: int = 51, bottom: int = 62) -> None:
     """底部电量条（64 空间里 11 单位高 → 16px 下约 2.75px）。
 
-    长度 = 电量，充电时整条在**同一种颜色**里呼吸（深 ↔ 浅，色相不变）。
-    为什么不用「从当前电量补满」的涨条：电量到 99% 时只剩 0.15px 可涨，等于没有动画；
-    呼吸与剩余空间无关，任何电量都看得见。
+    充电时是**同一种颜色**的长度动画：条子从「当前电量往下 CHARGE_SPAN 个百分点」
+    匀速爬到当前电量，到顶停住，再回到低点重来。位移量固定，所以 99% 也看得见在动；
+    而每一轮停住的位置正好是真实电量，一眼能读出充到几 %。
     """
     draw.rounded_rectangle((left, top, right, bottom), radius=5, fill=TRACK + (255,))
     if percent is None:
         return
     pct = min(100, max(0, percent))
-    color = level_color(pct)
-    if charge is not None:
-        wave = 0.5 - 0.5 * math.cos(2 * math.pi * max(0.0, min(1.0, charge)))
-        color = _mix(TRACK, color, 0.38 + 0.62 * wave)
     span = right - left
-    width = max(5, int(span * pct / 100))
-    draw.rounded_rectangle((left, top, left + width, bottom), radius=5, fill=color)
+    shown = float(pct)
+    if charge is not None:
+        tail = max(0.0, pct - CHARGE_SPAN)
+        shown = tail + (pct - tail) * max(0.0, min(1.0, charge))
+    width = min(span, int(round(span * shown / 100)))
+    if charge is None:
+        width = max(5, width)   # 静止时保底可见，否则 1% 会完全空
+    else:
+        width = max(0, width)   # 动画允许从空长起，低电量才看得出在补
+    if width:
+        draw.rounded_rectangle((left, top, left + width, bottom), radius=5, fill=level_color(pct))
 
 
 # ---------------- 对外接口 ----------------
@@ -109,8 +111,9 @@ def device_icon(key: str, percent: int | None, status: str = "ok",
                 charging: bool = False, charge: float | None = None) -> Image.Image:
     """多图标模式：设备形状 + 底部电量条。
 
-    充电时不再画闪电（16px 里和图形糊在一起），改成电量条从当前电量往 100% 涨：
-    charge 传动画进度 0~1；不传则停在当前电量。
+    充电时不再画闪电（16px 里和图形糊在一起），改成电量条的长度动画：
+    charge 传动画进度 0~1（0 = 从当前电量往下 22 个点，1 = 正好当前电量）；
+    不传则停在当前电量。
     """
     img = Image.new("RGBA", (N, N), (0, 0, 0, 0))
     color = ACCENT.get(key, GRAY) if status != "offline" else GRAY
