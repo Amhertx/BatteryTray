@@ -58,6 +58,22 @@ def main() -> None:
     root = tk.Tk()
     root.withdraw()
     panel = Panel(root, StubService(), cfg)
+
+    # --quiet：不弹窗、不进事件循环，只把 2 倍位图存盘（改排版时看效果用）
+    if "--quiet" in sys.argv:
+        for pal, view, name in [
+            (theme.LIGHT, "main", "light_main.png"),
+            (theme.DARK, "main", "dark_main.png"),
+            (theme.LIGHT, "settings", "light_settings.png"),
+            (theme.DARK, "settings", "dark_settings.png"),
+        ]:
+            panel.pal, panel.view = pal, view
+            panel._draw()
+            panel._img.save(os.path.join(OUT, name))
+        panel.win.destroy()
+        root.destroy()
+        return
+
     panel.show()
     panel.win.attributes("-alpha", 1.0)
     panel.win.geometry(f"{panel.W}x{panel.H}+{panel._target()[0]}+{panel._target()[1]}")

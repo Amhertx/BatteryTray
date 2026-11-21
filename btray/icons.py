@@ -107,22 +107,30 @@ def _draw_bar(draw, percent: int | None, charge: float | None = None,
 
 
 # ---------------- 对外接口 ----------------
-def device_icon(key: str, percent: int | None, status: str = "ok",
-                charging: bool = False, charge: float | None = None) -> Image.Image:
-    """多图标模式：设备形状 + 底部电量条。
+def device_canvas(key: str, percent: int | None, status: str = "ok",
+                  charging: bool = False, charge: float | None = None) -> Image.Image:
+    """64 空间的原始画布（未降采样）。
 
-    充电时不再画闪电（16px 里和图形糊在一起），改成电量条的长度动画：
-    charge 传动画进度 0~1（0 = 从当前电量往下 22 个点，1 = 正好当前电量）；
-    不传则停在当前电量。
+    托盘图标把它 BOX 缩到 16px；README 配图把它放大，比把 16px 再放大清楚得多。
     """
     img = Image.new("RGBA", (N, N), (0, 0, 0, 0))
     color = ACCENT.get(key, GRAY) if status != "offline" else GRAY
     img.alpha_composite(_glyph_layer(GLYPH.get(key, "keyboard"), color))
-    d = ImageDraw.Draw(img)
     live = status == "ok"
-    _draw_bar(d, percent if live else None,
+    _draw_bar(ImageDraw.Draw(img), percent if live else None,
               (charge or 0.0) if (charging and live) else None)
-    return img.resize((BASE, BASE), Image.BOX)
+    return img
+
+
+def device_icon(key: str, percent: int | None, status: str = "ok",
+                charging: bool = False, charge: float | None = None) -> Image.Image:
+    """多图标模式：设备形状 + 底部电量条（16px）。
+
+    充电时不再画闪电（16px 里和图形糊在一起），改成电量条的长度动画：
+    charge 传动画进度 0~1（0 = 从当前电量往下 CHARGE_SPAN 个点，1 = 正好当前电量）；
+    不传则停在当前电量。
+    """
+    return device_canvas(key, percent, status, charging, charge).resize((BASE, BASE), Image.BOX)
 
 
 def battery_icon(percent: int | None, status: str = "ok", charging: bool = False) -> Image.Image:

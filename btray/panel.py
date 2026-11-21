@@ -162,7 +162,9 @@ class Panel:
         self.pal: Palette = current_palette()
         self.view = "main"
         self._hot: list[tuple[float, float, float, float, object]] = []
+        self._btn_rects: dict[str, tuple[float, float, float, float]] = {}
         self._hover = -1
+        self._hover_btn: str | None = None
         self._photo = None
         self._img: Image.Image | None = None
         self._job = None
@@ -224,6 +226,7 @@ class Panel:
         self.canvas.configure(bg=self.pal.bg)
         self.view = "main"
         self._hover = -1
+        self._hover_btn = None
 
         x, y = self._target()
         self._draw()
@@ -319,11 +322,14 @@ class Panel:
                 if y0 <= event.y <= y0 + self.CARD_H:
                     idx = i
                     break
-        clickable = any(x1 <= event.x <= x2 and y1 <= event.y <= y2
-                        for x1, y1, x2, y2, _ in self._hot)
+        btn = next((name for name, r in self._btn_rects.items()
+                    if r[0] <= event.x <= r[2] and r[1] <= event.y <= r[3]), None)
+        clickable = btn is not None or any(
+            x1 <= event.x <= x2 and y1 <= event.y <= y2 for x1, y1, x2, y2, _ in self._hot)
         self.canvas.configure(cursor="hand2" if clickable else "arrow")
-        if idx != self._hover:
+        if idx != self._hover or btn != self._hover_btn:
             self._hover = idx
+            self._hover_btn = btn
             self._draw()
 
     def _schedule_refresh(self) -> None:
@@ -337,10 +343,31 @@ class Panel:
     def _hit(self, x1, y1, x2, y2, cb) -> None:
         self._hot.append((x1, y1, x2, y2, cb))
 
+    def _btn(self, name: str, x1, y1, x2, y2, cb) -> None:
+        """可悬停的软键：除了点击区域，还登记名字用于画 hover 底色。"""
+        self._btn_rects[name] = (x1, y1, x2, y2)
+        self._hit(x1, y1, x2, y2, cb)
+
+    def _draw_header_btns(self, pen: Pen, show_gear: bool = True) -> None:
+        """右上角软键：设置 + 收起（收起只隐藏弹窗，程序还在托盘里跑）。"""
+        p = self.pal
+        x2 = self.W - 14
+        items = [("close", "close", 16, 3.0, self.hide)]
+        if show_gear:
+            items.append(("gear", "gear", 15, 2.2, self._goto_settings))
+        for name, glyph, size, stroke, cb in items:
+            x1 = x2 - 26
+            hot = self._hover_btn == name
+            pen.rr(x1, 12, x1 + 26, 38, 8, fill=p.btn_hover if hot else p.chip)
+            pen.glyph(glyph, p.text if hot else p.sub, x1 + 13, 25, size, stroke)
+            self._btn(name, x1 - 2, 10, x2 + 2, 40, cb)
+            x2 = x1 - 6
+
     # ---------- 绘制入口 ----------
     def _draw(self) -> None:
         p = self.pal
         self._hot = []
+        self._btn_rects = {}
         img = Image.new("RGB", (self.W * SS, self.H * SS), p.bg)
         pen = Pen(img, ImageDraw.Draw(img), p)
         pen.rr(0.5, 0.5, self.W - 0.5, self.H - 0.5, 8, fill=p.bg, outline=p.border)
@@ -349,6 +376,9 @@ class Panel:
             self._draw_settings(pen)
         else:
             self._draw_main(pen)
+
+        if self._hover_btn not in self._btn_rects:
+            self._hover_btn = None
 
         self._img = img
         self._photo = ImageTk.PhotoImage(img.resize((self.W, self.H), Image.LANCZOS))
@@ -370,10 +400,7 @@ class Panel:
         stamp = time.strftime("%H:%M", time.localtime(self.service.last_update or time.time()))
         pen.text(16, 32, f"{head} · {stamp} 更新", 11, p.sub)
 
-        gx, gy = self.W - 14 - 26, 12
-        pen.rr(gx, gy, gx + 26, gy + 26, 8, fill=p.chip)
-        pen.glyph("gear", p.sub, gx + 13, gy + 13, 14, 2.0)
-        self._hit(gx - 2, gy - 2, gx + 28, gy + 28, self._goto_settings)
+        self._draw_header_btns(pen)
 
         for idx, r in enumerate(readings):
             self._draw_card(pen, idx, r)
@@ -469,6 +496,7 @@ class Panel:
         pen.glyph("back", p.sub, self.PAD + 13, 25, 13, 2.1)
         self._hit(self.PAD - 2, 10, self.PAD + 30, 40, self._goto_main)
         pen.text(self.PAD + 38, 25, "设置", 14, p.text, anchor="lm", bold=True)
+        self._draw_header_btns(pen, show_gear=False)
 
         # 显示
         pen.text(self.PAD + 4, 58, "显示", 11, p.faint, anchor="lm")

@@ -41,15 +41,20 @@ def _keyboard(d, k, color, w, ox, oy):
 
 
 def _gear(d, k, color, w, ox, oy):
+    """实心齿轮：齿是外圈上的小圆，齿体是一道厚环。
+
+    旧版是「小环 + 8 根细辐条」，14px 上辐条糊成一圈尖刺，看着像亮度/太阳图标。
+    齿轮真正好认的特征是「厚齿体 + 中心孔」，所以齿做短、齿体加厚、孔缩小。
+    """
     cx, cy = ox + 12 * k, oy + 12 * k
+    tr, tooth = 9.2 * k, 2.5 * k
     for i in range(8):
         a = math.pi / 4 * i
-        r1, r2 = 6.4 * k, 9.2 * k
-        d.line((cx + r1 * math.cos(a), cy + r1 * math.sin(a),
-                cx + r2 * math.cos(a), cy + r2 * math.sin(a)),
-               fill=color, width=int(w * 1.5))
-    r = 5.0 * k
-    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=color, width=int(w * 1.1))
+        px, py = cx + tr * math.cos(a), cy + tr * math.sin(a)
+        d.ellipse((px - tooth, py - tooth, px + tooth, py + tooth), fill=color)
+    body = 7.0 * k
+    d.ellipse((cx - body, cy - body, cx + body, cy + body),
+              outline=color, width=max(2, int(round(4.0 * k))))
 
 
 def _back(d, k, color, w, ox, oy):
@@ -68,6 +73,11 @@ def _bell(d, k, color, w, ox, oy):
     d.arc(_p(ox, oy, k, 9.6, 14.4, 14.4, 19.6), 0, 180, fill=color, width=w)
 
 
+def _close(d, k, color, w, ox, oy):
+    d.line(_p(ox, oy, k, 5.8, 5.8, 18.2, 18.2), fill=color, width=w)
+    d.line(_p(ox, oy, k, 18.2, 5.8, 5.8, 18.2), fill=color, width=w)
+
+
 def _bolt(d, k, color, w, ox, oy):
     d.polygon([_p(ox, oy, k, 13.4, 1.8), _p(ox, oy, k, 4.6, 13.4),
                _p(ox, oy, k, 11.2, 13.4), _p(ox, oy, k, 10.2, 22.2),
@@ -84,6 +94,7 @@ _GLYPHS = {
     "chevron": _chevron,
     "bell": _bell,
     "bolt": _bolt,
+    "close": _close,
 }
 
 

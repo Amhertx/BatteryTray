@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 APP_NAME = "BatteryTray"
-VERSION = "1.4"
+VERSION = "1.5"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 AUDIT_PATH = APP_DIR / "audit.log"

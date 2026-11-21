@@ -110,8 +110,8 @@ def main() -> None:
     click(panel, 180, panel.TOP + 2 * (panel.CARD_H + panel.GAP) + 30)
     check("点卡片只刷新那台设备", ("refresh", "aula_f87") in svc.calls)
 
-    # 齿轮 → 设置页
-    click(panel, panel.W - 26, 25)
+    # 齿轮 → 设置页（齿轮在右上角两个软键里靠左那个）
+    click(panel, panel.W - 14 - 26 - 6 - 13, 25)
     check("齿轮进入设置页", panel.view == "settings")
 
     # 显示方式：单个
@@ -145,6 +145,11 @@ def main() -> None:
     # 底部立即刷新
     click(panel, panel.W - 30, 340)
     check("立即刷新", ("refresh_all",) in svc.calls)
+
+    # 右上角 × → 收起面板（开始收起动画即算命中）
+    panel._anim_job = None
+    click(panel, panel.W - 14 - 13, 25)
+    check("右上角 × 收起面板", panel._anim_job is not None or not panel.visible)
 
     root.after(200, root.quit)
     root.mainloop()
