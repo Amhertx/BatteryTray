@@ -11,12 +11,10 @@ dist/
 # 编译产物：exe 通过 GitHub Releases 分发，不进仓库
 *.exe
 
-# 调试截图与临时产物
-*.png
-*.jpg
-*.gif
+# 调试截图与日志（docs/ 是 README 配图，要进仓库，所以按目录排除而不是按后缀）
 *.log
-preview/
+/preview/
+/panel_preview.png
 
 # 编辑器
 .idea/
