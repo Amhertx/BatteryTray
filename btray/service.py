@@ -4,6 +4,7 @@ from __future__ import annotations
 import threading
 import time
 
+from .cache import seen
 from .config import DEVICES
 from .history import history
 from .model import Reading
@@ -19,9 +20,7 @@ class BatteryService:
         self._providers = build_providers(cfg)
         self._lock = threading.Lock()
         self._readings: dict[str, Reading] = {
-            d["key"]: Reading(key=d["key"], name=d["name"], short=d["short"], status="offline",
-                              detail="尚未读取", charged_days=history.days_since(d["key"]))
-            for d in DEVICES
+            d["key"]: self._seed(d) for d in DEVICES
         }
         self._fails: dict[str, int] = {d["key"]: 0 for d in DEVICES}
         self._next_due: dict[str, float] = {d["key"]: 0.0 for d in DEVICES}
@@ -70,6 +69,23 @@ class BatteryService:
 
 
     # ---------- 内部 ----------
+    @staticmethod
+    def _seed(dev: dict) -> Reading:
+        """启动时的初始读数：有缓存就先用上次读到的电量顶上。
+
+        刚开机键鼠还在休眠、耳机没开机，一条也读不到；显示「上次读数 · N 小时前」
+        比一片「离线」有用得多。charging 故意留空 —— 旧值不能当成现在还在充。
+        """
+        reading = Reading(key=dev["key"], name=dev["name"], short=dev["short"],
+                          status="offline", detail="尚未读取",
+                          charged_days=history.days_since(dev["key"]))
+        cached = seen.get(dev["key"])
+        if cached:
+            reading.percent = cached["percent"]
+            reading.seen_at = cached["ts"]
+            reading.detail = "上次读数"
+        return reading
+
     def _next_wait(self) -> float:
         """下一轮唤醒前要等多久：取最近到期设备的剩余时间，上限一个正常间隔。"""
         now = time.time()
@@ -124,11 +140,16 @@ class BatteryService:
                 history.note_charging(key)
             reading.charged_days = history.days_since(key)
 
+            if reading.status == "ok":
+                reading.seen_at = now
+                seen.remember(key, reading.percent, reading.charging, now)
+
             with self._lock:
                 prev = self._readings.get(key)
                 # 休眠/离线时保留上次电量用于「上次 xx%」，但状态照实标注
                 if reading.status != "ok" and prev is not None and prev.percent is not None:
                     reading.percent = prev.percent
+                    reading.seen_at = prev.seen_at or prev.updated
                 self._readings[key] = reading
 
             time.sleep(0.25)  # 设备之间错峰，避免同时打满 USB

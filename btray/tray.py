@@ -253,9 +253,25 @@ class TrayController:
         self._on_ui(self.root.quit)
 
     # ---------- 低电量提醒 ----------
-    def _notify(self, title: str, message: str) -> None:
-        """走托盘图标的系统通知通道，即 Windows 右下角的标准弹窗。"""
-        for icon in list(self._icons):
+    def _icon_for(self, key: str | None):
+        """某台设备对应的托盘图标；单图标模式下只有一个通道。"""
+        if not self._icons:
+            return None
+        if key is None or self.mode != "multi":
+            return self._icons[0]
+        keys = [d["key"] for d in DEVICES]
+        idx = keys.index(key) if key in keys else -1
+        return self._icons[idx] if 0 <= idx < len(self._icons) else self._icons[0]
+
+    def _notify(self, title: str, message: str, key: str | None = None) -> None:
+        """走托盘图标的系统通知通道，即 Windows 右下角的标准弹窗。
+
+        key 指定用哪台设备自己的图标发：同一个图标连发两条，Shell_NotifyIcon 会用
+        后一条顶掉前一条，多台同时低电量时就只剩一条可见。各走各的图标才都弹得出来。
+        """
+        first = self._icon_for(key)
+        candidates = ([first] if first else []) + [i for i in self._icons if i is not first]
+        for icon in candidates:
             try:
                 icon.notify(message, title)
                 return
@@ -266,8 +282,10 @@ class TrayController:
         if not self.alert_enabled:
             return
         th = self.threshold
+        fresh = []
         for r in readings:
-            if r.status != "ok" or r.percent is None:
+            if r.status != "ok" or r.percent is None or r.is_cached:
+                # 读不到就不评：缓存值可能已经是几小时前的，拿它报警只会误报
                 self._alerted.pop(r.key, None)
                 continue
             if r.charging:
@@ -277,11 +295,22 @@ class TrayController:
             if r.percent <= th:
                 if not self._alerted.get(r.key):
                     self._alerted[r.key] = True
-                    self._notify(f"{r.name} 电量偏低",
-                                 f"剩余 {r.percent}%，建议尽快充电。")
+                    fresh.append(r)
             elif r.percent > th + ALERT_HYSTERESIS:
                 # 回升到阈值以上一定幅度才重新武装，防止在临界点反复弹
                 self._alerted.pop(r.key, None)
+
+        if not fresh:
+            return
+        if self.mode == "multi":
+            # 每台走自己的图标，再错开 0.6 秒，让 Windows 一条条排队展示
+            for i, r in enumerate(fresh):
+                self.root.after(i * 600, lambda r=r: self._notify(
+                    f"{r.name} 电量偏低", f"剩余 {r.percent}%，建议尽快充电。", r.key))
+        else:
+            # 单图标只有一个通知通道，多台并成一条，否则互相顶掉
+            detail = "、".join(f"{r.name} {r.percent}%" for r in fresh)
+            self._notify("设备电量偏低", f"{detail}，建议尽快充电。")
 
     # ---------- 供面板调用 ----------
     def autostart_enabled(self) -> bool:

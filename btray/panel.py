@@ -427,6 +427,10 @@ class Panel:
             pct = max(0, min(100, int(r.percent)))
             color = p.ok if pct >= 60 else (p.warn if pct >= 30 else p.bad)
             pen.ring(cx, cy, 24, 4, pct / 100, color, mix_hex(color, chip_bg, 0.78))
+        elif r.is_cached:
+            # 旧读数也画环，但整体压灰：一眼能看出「有值，可不是现在的」
+            pen.ring(cx, cy, 24, 4, int(r.percent) / 100, p.faint,
+                     mix_hex(p.faint, chip_bg, 0.82))
         else:
             pen.ring(cx, cy, 24, 4, 0, p.track, p.chip)
         pen.glyph(GLYPH.get(r.key, "keyboard"), fg, cx, cy, 21, 1.9)
@@ -451,10 +455,20 @@ class Panel:
                 num_w = pen.width(num, 24, True)
                 pen.glyph("bolt", p.info_text, xr - sig_w - num_w - 10, y0 + 36, 12, 1.6)
         else:
-            label = {"sleep": "休眠", "offline": "离线", "pending": "待探测"}.get(r.status, "读取失败")
-            w = max(46, pen.width(label, 11) + 20)
-            pen.rr(xr - w, y0 + 28, xr, y0 + 50, 11, fill=p.chip)
-            pen.text(xr - w / 2, y0 + 39, label, 11, p.faint, anchor="mm")
+            if r.is_cached:
+                # 上次读到的值：数字照旧放大号，但压成灰色并标「上次读数」，
+                # 免得关机一晚后把旧电当成实时读数
+                pct = int(r.percent)
+                sig_w = pen.width("%", 10)
+                pen.text(xr, y0 + 51, "%", 10, p.faint, anchor="rs")
+                pen.text(xr - sig_w - 1, y0 + 51, str(pct), 21, p.faint, anchor="rs")
+                pen.text(xr, y0 + 21, "上次读数", 9, p.faint, anchor="rm")
+            else:
+                label = {"sleep": "休眠", "offline": "离线", "pending": "待探测"}.get(
+                    r.status, "读取失败")
+                w = max(46, pen.width(label, 11) + 20)
+                pen.rr(xr - w, y0 + 28, xr, y0 + 50, 11, fill=p.chip)
+                pen.text(xr - w / 2, y0 + 39, label, 11, p.faint, anchor="mm")
 
         self._hit(x1, y0, x2, y1, lambda k=r.key: self._refresh_one(k))
 
@@ -468,6 +482,12 @@ class Panel:
             # 正在充电时「今天充过」没有信息量，省掉
             if not r.charging:
                 parts.append(note)
+        elif r.is_cached:
+            # 数字和「上次读数」在右侧，这里补状态和多久之前
+            parts.append({"sleep": "休眠", "offline": "离线",
+                          "pending": "待探测"}.get(r.status, "读取失败"))
+            parts.append(r.age_text)
+            parts.append(note)
         elif r.percent is not None:
             parts.append(f"上次 {r.percent}%")
             parts.append(note)
